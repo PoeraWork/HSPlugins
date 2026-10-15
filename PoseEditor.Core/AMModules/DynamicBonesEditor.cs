@@ -322,7 +322,7 @@ namespace HSPE.AMModules
         public DynamicBonesEditor(PoseController parent, GenericOCITarget target) : base(parent)
         {
             _target = target;
-            _bodyHeading = new BodyHeadingReference(parent, target);
+            _bodyHeading = new BodyHeadingReference(parent, target, _dynamicBones);
             _parent.onUpdate += Update;
             _parent.onLateUpdate += LateUpdate;
             if (_debugLines == null)
@@ -582,7 +582,7 @@ namespace HSPE.AMModules
             if (_dynamicBoneTarget != null &&
                 (GetGravitySpace(_dynamicBoneTarget) == DirectionSpace.Heading || GetForceSpace(_dynamicBoneTarget) == DirectionSpace.Heading) &&
                 _bodyHeading.UsesObjectTransform)
-                GUILayout.Label("Following object heading.");
+                GUILayout.Label("No body bone found; following object heading.");
 
             {
                 GUILayout.BeginHorizontal();

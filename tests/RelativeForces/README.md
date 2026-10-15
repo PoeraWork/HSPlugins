@@ -29,11 +29,17 @@ The cases exercise:
 - World, animated horizontal heading, and attachment-bone frames.
 - A fixed Studio root with a turning native pelvis, reproducing the MMD regression.
 - Native pelvis references that work independently of bone names, apply replacement
-  references immediately, and fall back to the object transform when invalid.
-- Object heading for items regardless of child bone names, and reset of
-  inverted-pose fallback history.
+  references immediately, and fall back to the object transform when invalid
+  without guessing bone names. Item motion-control name filters do not affect
+  an explicit native pelvis reference.
+- Imported PMX body-name resolution and priority, including numeric prefixes,
+  exclusion of nested Studio objects, MMD driver controls and simulated bones.
+- Exact body-name matching, rejected invalid PMX prefixes, and imported skeleton
+  reselection after reset. Items without a recognized body use object heading.
+- Reset of inverted-pose fallback history for native and imported skeletons.
 - Sharing one resolved heading between gravity and force in a physics update,
-  verified by a transform-read counter.
+  verified by transform-read and hierarchy-scan counters for native characters
+  and imported items.
 - Horizontal twist extraction while bending past 90 degrees, side tilts, turn
   wraparound and fully inverted poses; attachment mode still uses all three axes.
 - Preserving current world direction when switching modes, repeated mode selection,
@@ -56,9 +62,9 @@ installation still require a plugin build and an in-game smoke test. The data
 copy test covers the shared copy constructor; it does not click the complete
 copy/paste panel. `LoadFrom` runs its delayed callback immediately.
 
-A manual smoke check should keep a native character's Studio object fixed while
-animation turns the body, bend the body past 90 degrees, switch each checkbox
-on/off, change gravity/force values, copy/paste settings, reset, then save and
-reload a scene. Also check that an item's heading follows its object transform.
-Confirm the two modes follow their respective frames and that the flags survive
-character duplication and clothes changes.
+A manual smoke check should use both a native character and a PMX item, keep the
+Studio object fixed while animation turns the body, bend the body past 90 degrees,
+switch each checkbox on/off, change gravity/force values, copy/paste settings,
+reset, then save and reload a scene. Also check that an item without a recognized
+body uses its object heading. Confirm the two modes follow their respective frames
+and that the flags survive character duplication and clothes changes.

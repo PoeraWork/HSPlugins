@@ -66,7 +66,20 @@ namespace UnityEngine
     public class Transform
     {
         public string name = "bone";
-        public Transform parent;
+        private Transform currentParent;
+        private readonly List<Transform> children = new();
+        public Transform parent
+        {
+            get => currentParent;
+            set
+            {
+                currentParent?.children.Remove(this);
+                currentParent = value;
+                currentParent?.children.Add(this);
+            }
+        }
+        public int childCount => children.Count;
+        public Transform GetChild(int index) => children[index];
         public bool IsChildOf(Transform ancestor)
         {
             for (Transform current = this; current != null; current = current.parent)
@@ -121,6 +134,19 @@ namespace HSPE
     {
         public UnityEngine.Transform transform = new() { name = "character" };
         public readonly HashSet<UnityEngine.GameObject> _childObjects = new();
+        public int HierarchyScanCount;
+        public T[] GetComponentsInChildren<T>(bool includeInactive)
+        {
+            HierarchyScanCount++;
+            var result = new List<T>();
+            void Walk(UnityEngine.Transform current)
+            {
+                if (current is T component) result.Add(component);
+                for (int i = 0; i < current.childCount; i++) Walk(current.GetChild(i));
+            }
+            Walk(transform);
+            return result.ToArray();
+        }
     }
 
     public class MainWindow

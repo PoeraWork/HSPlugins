@@ -35,8 +35,17 @@ internal static class Program
                 ("Initial fully inverted body uses the Studio root heading", InitialInversionFallback),
                 ("Reset clears the previous inverted-pose fallback", ResetClearsHeading),
                 ("The native pelvis reference is independent of names and updates immediately", NativePelvisReference),
+                ("Item motion-control names do not exclude an explicit native pelvis", NativePelvisUnderNamedAncestor),
                 ("Both heading directions share one reference read per physics update", SharedHeadingRead),
-                ("Items use object heading regardless of child bone names", ItemFallback),
+                ("PMX body aliases resolve from the animated item hierarchy", PmxAliases),
+                ("PMX resolver prefers lower-body bones over upper-body controls", PmxBodyPriority),
+                ("PMX resolver excludes nested Studio objects", PmxNestedObject),
+                ("PMX resolver excludes VMD driver skeletons", PmxDriverSkeleton),
+                ("PMX resolver excludes simulated bones and their descendants", PmxSimulatedBones),
+                ("Body names require exact aliases and valid PMX prefixes", ExactBodyNames),
+                ("Reset reselects the current imported skeleton", ItemResetReselectsSkeleton),
+                ("Reset clears the imported skeleton's inverted-pose fallback", ItemResetClearsHeading),
+                ("Unrecognized items use root heading without following head or limb bones", ItemFallback),
                 ("Changing mode after animation preserves world direction", SwitchPreservesWorld),
                 ("Selecting the active mode again preserves authored coordinates", RepeatedMode),
                 ("Gravity and force have independent modes", IndependentModes),
@@ -173,7 +182,7 @@ internal static class Program
             Bone.m_Force = new Vector3(1, 0, 0);
             ((IList)GetField(Editor, "_dynamicBones")).Add(Bone);
             var headingType = editorType.Assembly.GetType("HSPE.AMModules.BodyHeadingReference", throwOnError: true);
-            BodyHeading = Activator.CreateInstance(headingType, Instance, null, [Controller, Target], null);
+            BodyHeading = Activator.CreateInstance(headingType, Instance, null, [Controller, Target, GetField(Editor, "_dynamicBones")], null);
             editorType.GetField("_bodyHeading", Instance).SetValue(Editor, BodyHeading);
         }
 
@@ -420,13 +429,12 @@ internal static class Program
     {
         var f = new Fixture();
         f.UseItem();
-        foreach (string name in new[] { "hips", "pelvis", "head", "left arm", "hips_helper" })
+        foreach (string name in new[] { "head", "頭", "left arm", "右足", "hips_helper", "PMX_bad_下半身" })
             _ = new Transform { name = name, parent = f.Model, rotation = Quaternion.Yaw(120) };
         f.Space("Force", "Heading");
         f.Model.rotation = Quaternion.Yaw(90) * Quaternion.AngleAxis(60, new Vector3(1, 0, 1));
         f.Apply();
-        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "item uses horizontal object rotation");
-        Equal(true, f.UsesObjectTransform, "item uses its object transform");
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "unrecognized item uses horizontal root rotation");
     }
 
     private static void ResetClearsHeading()
@@ -471,17 +479,177 @@ internal static class Program
 
     private static void SharedHeadingRead()
     {
+        foreach (bool item in new[] { false, true })
+        {
+            var f = new Fixture();
+            Transform body = f.Hips;
+            if (item)
+            {
+                f.UseItem();
+                body = new Transform { name = "hips", parent = f.Model };
+            }
+            f.Space("Gravity", "Heading");
+            f.Space("Force", "Heading");
+            f.Set("Gravity", new Vector3(1, -2, 0));
+            f.Set("Force", new Vector3(3, 4, 5));
+            body.rotation = Quaternion.Yaw(90);
+            body.RotationReadCount = 0;
+            f.Controller.HierarchyScanCount = 0;
+            f.Apply();
+            Equal(1, body.RotationReadCount, "one heading read for both vectors");
+            Equal(0, f.Controller.HierarchyScanCount, "cached reference avoids hierarchy scanning");
+            Near(new Vector3(0, -2, -1), f.Bone.m_Gravity, "shared heading gravity");
+            Near(new Vector3(5, 4, -3), f.Bone.m_Force, "shared heading force");
+        }
+    }
+
+    private static void NativePelvisUnderNamedAncestor()
+    {
         var f = new Fixture();
-        f.Space("Gravity", "Heading");
+        var ancestor = new Transform { name = "VmdDummyBone", parent = f.Model };
+        f.Hips.parent = ancestor;
         f.Space("Force", "Heading");
-        f.Set("Gravity", new Vector3(1, -2, 0));
-        f.Set("Force", new Vector3(3, 4, 5));
         f.Hips.rotation = Quaternion.Yaw(90);
-        f.Hips.RotationReadCount = 0;
         f.Apply();
-        Equal(1, f.Hips.RotationReadCount, "one heading read for both vectors");
-        Near(new Vector3(0, -2, -1), f.Bone.m_Gravity, "shared heading gravity");
-        Near(new Vector3(5, 4, -3), f.Bone.m_Force, "shared heading force");
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "explicit native pelvis ignores item-only name filters");
+        Equal(false, f.UsesObjectTransform, "native pelvis remains the selected reference");
+        Equal(0, f.Controller.HierarchyScanCount, "explicit native reference needs no item name scan");
+    }
+
+    private static void PmxAliases()
+    {
+        foreach (string name in new[] { "PMX_0003_下半身", "下半身", "PMX_12_腰", "腰", "hips", "Pelvis", "cf_j_hips", "lower body" })
+        {
+            var f = new Fixture();
+            f.UseItem();
+            var modelContainer = new Transform { name = "imported model", parent = f.Model };
+            var body = new Transform { name = name, parent = modelContainer };
+            f.Space("Force", "Heading");
+            body.rotation = Quaternion.Yaw(90);
+            f.Apply();
+            Near(new Vector3(0, 0, -1), f.Bone.m_Force, "animated PMX alias " + name);
+            body.rotation = Quaternion.Yaw(180) * Quaternion.AngleAxis(60, new Vector3(1, 0, 1));
+            f.Apply();
+            Near(new Vector3(-1, 0, 0), f.Bone.m_Force, "cached PMX reference stays animated");
+            Near(Vector3.forward, f.Model.rotation * Vector3.forward, "Studio item stays fixed");
+        }
+    }
+
+    private static void PmxBodyPriority()
+    {
+        var f = new Fixture();
+        f.UseItem();
+        _ = new Transform { name = "PMX_0000_センター", parent = f.Model, rotation = Quaternion.Yaw(100) };
+        _ = new Transform { name = "PMX_0001_上半身", parent = f.Model, rotation = Quaternion.Yaw(110) };
+        _ = new Transform { name = "PMX_0002_腰", parent = f.Model, rotation = Quaternion.Yaw(120) };
+        var body = new Transform { name = "PMX_0003_下半身", parent = f.Model };
+        f.Space("Force", "Heading");
+        body.rotation = Quaternion.Yaw(90);
+        f.Apply();
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "lower-body selected over controls");
+    }
+
+    private static void PmxNestedObject()
+    {
+        var f = new Fixture();
+        f.UseItem();
+        var nested = new Transform { name = "another Studio character", parent = f.Model };
+        _ = new Transform { name = "hips", parent = nested, rotation = Quaternion.Yaw(120) };
+        f.Controller._childObjects.Add(nested.gameObject);
+        var body = new Transform { name = "腰", parent = f.Model };
+        f.Space("Force", "Heading");
+        body.rotation = Quaternion.Yaw(90);
+        f.Apply();
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "own lower-ranked body selected");
+    }
+
+    private static void PmxDriverSkeleton()
+    {
+        var f = new Fixture();
+        f.UseItem();
+        var driver = new Transform { name = "VmdDummyBone", parent = f.Model };
+        _ = new Transform { name = "下半身", parent = driver, rotation = Quaternion.Yaw(120) };
+        var body = new Transform { name = "腰", parent = f.Model };
+        f.Space("Force", "Heading");
+        body.rotation = Quaternion.Yaw(90);
+        f.Apply();
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "real skeleton selected");
+    }
+
+    private static void PmxSimulatedBones()
+    {
+        foreach (bool nested in new[] { false, true })
+        {
+            var f = new Fixture();
+            f.UseItem();
+            var simulated = nested ? new Transform { parent = f.Root } : f.Root;
+            simulated.name = "PMX_0014_hips";
+            simulated.rotation = Quaternion.Yaw(120);
+            var body = new Transform { name = "PMX_0003_腰", parent = f.Model };
+            f.Space("Force", "Heading");
+            body.rotation = Quaternion.Yaw(90);
+            simulated.rotation = Quaternion.Yaw(180);
+            f.Apply();
+            Near(new Vector3(0, 0, -1), f.Bone.m_Force, "animated waist chosen over simulated hips");
+            simulated.rotation = Quaternion.Yaw(270);
+            f.Apply();
+            Near(new Vector3(0, 0, -1), f.Bone.m_Force, "physics cannot feed back into heading");
+        }
+    }
+
+    private static void ExactBodyNames()
+    {
+        foreach (string name in new[] { "hips2", "left_hips", "hips_helper", "lowerbody_extra", "PMX__hips", "PMX_a1_hips", "PMX_12x_下半身", "PMX_123hips", "PMX_12_hips_helper" })
+        {
+            var f = new Fixture();
+            f.UseItem();
+            var candidate = new Transform { name = name, parent = f.Model };
+            f.Space("Force", "Heading");
+            candidate.rotation = Quaternion.Yaw(90);
+            f.Apply();
+            Equal(true, f.UsesObjectTransform, "unrecognized body name " + name);
+            Near(Vector3.right, f.Bone.m_Force, "invalid candidate cannot steer force");
+        }
+    }
+
+    private static void ItemResetReselectsSkeleton()
+    {
+        var f = new Fixture();
+        f.UseItem();
+        var original = new Transform { name = "waist", parent = f.Model };
+        f.Space("Force", "Heading");
+        var replacement = new Transform { name = "PMX_0003_下半身", parent = f.Model, rotation = Quaternion.Yaw(90) };
+        original.rotation = Quaternion.Yaw(30);
+        f.Apply();
+        Near(Quaternion.Yaw(30) * Vector3.right, f.Bone.m_Force, "cached skeleton before reset");
+        int previousScans = f.Controller.HierarchyScanCount;
+        f.ResetHeading();
+        f.Apply();
+        Near(new Vector3(0, 0, -1), f.Bone.m_Force, "replacement selected after reset");
+        Equal(previousScans + 1, f.Controller.HierarchyScanCount, "one new hierarchy scan");
+        Equal(false, f.UsesObjectTransform, "replacement uses a body bone");
+        replacement.rotation = Quaternion.Yaw(180);
+        f.Apply();
+        Near(new Vector3(-1, 0, 0), f.Bone.m_Force, "replacement stays live");
+    }
+
+    private static void ItemResetClearsHeading()
+    {
+        var f = new Fixture();
+        f.UseItem();
+        var original = new Transform { name = "waist", parent = f.Model };
+        f.Space("Force", "Heading");
+        original.rotation = Quaternion.Yaw(80);
+        f.Apply();
+        Near(Quaternion.Yaw(80) * Vector3.right, f.Bone.m_Force, "previous skeleton heading");
+        _ = new Transform { name = "hips", parent = f.Model, rotation = Quaternion.Pitch(180) };
+        f.Model.rotation = Quaternion.Yaw(25);
+        f.ResetHeading();
+        f.Apply();
+        Near(Quaternion.Yaw(25) * Vector3.right, f.Bone.m_Force, "new inverted skeleton uses fresh object heading");
+        f.Model.rotation = Quaternion.Yaw(35);
+        f.Apply();
+        Near(Quaternion.Yaw(25) * Vector3.right, f.Bone.m_Force, "new fallback remains stable while inverted");
     }
 
     private static void IndependentModes()
