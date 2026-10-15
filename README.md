@@ -21,5 +21,8 @@ Main changes in the fork:
 
 To see hotkeys used to use the plugins check plugin settings or the config files in BepInEx\config.
 
+Pose Editor's Dynamic Bones panel can keep gravity and force in world space or
+follow animated model directions. See [dynamic-bone directions](docs/dynamic-bone-directions.md).
+
 ## Credits
 This is a fork of [HSPlugins](https://bitbucket.org/Joan6694/hsplugins/src/master/) by [Joan6694](https://joan6694.bitbucket.io/). Main reason for the fork is that Joan disappeared and the plugins needed to be ported to KKS. Support for games older than KK was dropped to simplify the codebase. Some no longer used plugins are not able to build and are excluded from the solution. Use the legacy sln to build those if needed.
